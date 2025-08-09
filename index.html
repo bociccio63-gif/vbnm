@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Zoro Game - Funzionante</title>
+<style>
+  body { margin:0; overflow:hidden; background:#000; }
+  canvas { display:block; margin:0 auto; background:#111; }
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="800" height="480"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById("gameCanvas");
+  const ctx = canvas.getContext("2d");
+
+  // --- GAME VARS ---
+  const gravity = 0.6;
+  const floorY = 440;
+
+  let keys = {};
+  let gameOver = false;
+  let gameOverTimer = 0;
+  let fireworksTimer = 0;
+  let currentLevel = 0;
+
+  const levels = [
+    { length: 2800, enemies: 3, blocks: 5 },
+    { length: 3800, enemies: 5, blocks: 8 },
+    { length: 4800, enemies: 7, blocks: 12 }
+  ];
+
+  let cameraX = 0;
+
+  // --- PLAYER ---
+  const player = {
+    x: 100,
+    y: floorY - 60,
+    w: 40,
+    h: 60,
+    vy: 0,
+    onGround: true,
+    health: 100,
+    canShoot: false,
+    shootTimer: 0,
+  };
+
+  // --- GAME OBJECTS ---
+  let enemies = [];
+  let blocks = [];
+  let fireballs = [];
+
+  // --- HELPERS ---
+  function rectsCollide(a,b){
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  // --- SPAWN LEVEL ---
+  function spawnLevel(levelIndex){
+    const lvl = levels[levelIndex];
+    enemies = [];
+    blocks = [];
+    fireballs = [];
+    player.x = 100;
+    player.y = floorY - player.h;
+    player.vy = 0;
+    player.onGround = true;
+    player.health = 100;
+    player.canShoot = false;
+    player.shootTimer = 0;
+    cameraX = 0;
+    gameOver = false;
+    fireworksTimer = 0;
+
+    // Spawn enemies
+    for(let i=0; i<lvl.enemies; i++){
+      enemies.push({
+        x: 800 + i*300,
+        y: floorY - 60,
+        w: 40,
+        h: 60,
+        alive: true
+      });
+    }
+
+    // Spawn blocks (mezz’aria)
+    for(let i=0; i<lvl.blocks; i++){
+      blocks.push({
+        x: 400 + i*250,
+        y: 280,
+        w: 40,
+        h: 40,
+        broken: false,
+        bonus: Math.random() < 0.5 ? "heart" : "fire"
+      });
+    }
+  }
+
+  // --- SHOOT FIREBALL ---
+  function shootFireball(){
+    if(!player.canShoot) return;
+    fireballs.push({
+      x: player.x + player.w,
+      y: player.y + player.h/2,
+      w: 10,
+      h: 10,
+      vx: 7,
+    });
+  }
+
+  // --- UPDATE ---
+  function update(){
+    if(gameOver){
+      gameOverTimer--;
+      if(gameOverTimer <= 0){
+        spawnLevel(0);
+      }
+      return;
+    }
+
+    // Move player horizontally
+    if(keys["ArrowRight"]) player.x += 5;
+    if(keys["ArrowLeft"]) player.x -= 5;
+
+    // Jump
+    if(keys["Space"] && player.onGround){
+      player.vy = -13;
+      player.onGround = false;
+    }
+
+    // Gravity
+    player.vy += gravity;
+    player.y += player.vy;
+
+    // Floor collision
+    if(player.y + player.h > floorY){
+      player.y = floorY - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    }
+
+    // Camera follows player (centered)
+    cameraX = player.x - canvas.width/2;
+    if(cameraX < 0) cameraX = 0;
+
+    // Break blocks if hit from below
+    blocks.forEach(block => {
+      if(!block.broken){
+        // player collides with block from below
+        if(
+          player.x + player.w > block.x &&
+          player.x < block.x + block.w &&
+          player.y < block.y + block.h &&
+          player.y + player.h > block.y &&
+          player.vy < 0 && // moving up
+          (player.y + player.h) > (block.y + block.h - 10)
+        ){
+          block.broken = true;
+          // give bonus
+          if(block.bonus === "heart"){
+            player.health = Math.min(100, player.health + 20);
+          } else if(block.bonus === "fire"){
+            player.canShoot = true;
+            player.shootTimer = 60 * 30;
+          }
+        }
+      }
+    });
+
+    // Fireball update
+    fireballs.forEach((fb, idx) => {
+      fb.x += fb.vx;
+      // remove fireball if out of screen or past level length
+      if(fb.x - cameraX > canvas.width || fb.x > levels[currentLevel].length){
+        fireballs.splice(idx,1);
+      } else {
+        // Check collision with enemies
+        enemies.forEach(enemy => {
+          if(enemy.alive && rectsCollide(fb, enemy)){
+            enemy.alive = false;
+            fireballs.splice(idx,1);
+          }
+        });
+      }
+    });
+
+    // Shoot fireball key
+    if(keys["KeyF"] && player.canShoot){
+      shootFireball();
+    }
+
+    // Decrease shoot timer
+    if(player.canShoot){
+      player.shootTimer--;
+      if(player.shootTimer <= 0) player.canShoot = false;
+    }
+
+    // Enemy collisions
+    enemies.forEach(enemy => {
+      if(enemy.alive && rectsCollide(player, enemy)){
+        if(player.vy > 0){ // player falling on enemy
+          enemy.alive = false;
+          player.vy = -10; // bounce
+        } else {
+          player.health -= 1;
+          if(player.health <= 0){
+            gameOver = true;
+            gameOverTimer = 60 * 5;
+          }
+        }
+      }
+    });
+
+    // Player bounds horizontal
+    if(player.x < 0) player.x = 0;
+    if(player.x > levels[currentLevel].length) player.x = levels[currentLevel].length;
+
+    // Level end
+    if(player.x >= levels[currentLevel].length){
+      fireworksTimer = 60 * 5; // 5 sec fireworks
+    }
+
+    // Fireworks timer
+    if(fireworksTimer > 0){
+      fireworksTimer--;
+      if(fireworksTimer === 0){
+        currentLevel++;
+        if(currentLevel >= levels.length) currentLevel = 0;
+        spawnLevel(currentLevel);
+      }
+    }
+
+  }
+
+  // --- DRAW ---
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // Background city blocks (Tekken style)
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    for(let i = - (cameraX % 100); i < canvas.width; i += 100){
+      ctx.fillStyle = "#444";
+      ctx.fillRect(i, 300, 80, 180);
+      ctx.fillStyle = "#222";
+      ctx.fillRect(i + 10, 320, 15, 20);
+      ctx.fillRect(i + 35, 350, 15, 15);
+      ctx.fillRect(i + 60, 310, 15, 30);
+    }
+
+    // Insegna "Zoro Game"
+    ctx.fillStyle = "red";
+    ctx.font = "bold 30px Arial";
+    ctx.fillText("Zoro Game", 20, 40);
+
+    // Draw blocks
+    blocks.forEach(block => {
+      if(!block.broken){
+        ctx.fillStyle = "brown";
+        ctx.fillRect(block.x - cameraX, block.y, block.w, block.h);
+        // bonus icon
+        ctx.fillStyle = block.bonus === "heart" ? "red" : "orange";
+        ctx.beginPath();
+        ctx.arc(block.x - cameraX + 20, block.y + 20, 10, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+
+    // Draw enemies
+    enemies.forEach(enemy => {
+      if(enemy.alive){
+        ctx.fillStyle = "purple";
+        ctx.fillRect(enemy.x - cameraX, enemy.y, enemy.w, enemy.h);
+        // occhi (minacciosi)
+        ctx.fillStyle = "white";
+        ctx.fillRect(enemy.x - cameraX + 10, enemy.y + 15, 5, 5);
+        ctx.fillRect(enemy.x - cameraX + 25, enemy.y + 15, 5, 5);
+      }
+    });
+
+    // Draw player rapper
+    ctx.fillStyle = "gold";
+    ctx.fillRect(player.x - cameraX, player.y, player.w, player.h);
+    // codino nero
+    ctx.fillStyle = "black";
+    ctx.fillRect(player.x - cameraX + 30, player.y + 10, 8, 8);
+    // pizzetto
+    ctx.fillRect(player.x - cameraX + 15, player.y + player.h - 10, 10, 5);
+
+    // Draw fireballs
+    ctx.fillStyle = "orange";
+    fireballs.forEach(fb => {
+      ctx.beginPath();
+      ctx.arc(fb.x - cameraX + 5, fb.y + 5, 5, 0, Math.PI*2);
+      ctx.fill();
+    });
+
+    // Draw health bar top-right
+    ctx.fillStyle = "red";
+    ctx.fillRect(canvas.width - 120, 20, 100, 10);
+    ctx.fillStyle = "lime";
+    ctx.fillRect(canvas.width - 120, 20, player.health, 10);
+    ctx.strokeStyle = "white";
+    ctx.strokeRect(canvas.width - 120, 20, 100, 10);
+
+    // Fireworks
+    if(fireworksTimer > 0){
+      for(let i=0; i<15; i++){
+        const x = Math.random()*canvas.width;
+        const y = Math.random()*150;
+        ctx.fillStyle = ["yellow","orange","white"][Math.floor(Math.random()*3)];
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+
+    // Game over message blinking
+    if(gameOver){
+      if(Math.floor(Date.now() / 500) % 2 === 0){
+        ctx.fillStyle = "white";
+        ctx.font = "bold 28px Arial";
+        ctx.fillText("Hai perso, sei solo un rapperino", canvas.width/2 - 220, canvas.height/2);
+      }
+    }
+  }
+
+  // --- GAME LOOP ---
+  function loop(){
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  spawnLevel(currentLevel);
+  loop();
+
+  // CONTROLLO TASTI
+  window.addEventListener("keydown", e=>{
+    keys[e.code] = true;
+    if(e.code === "KeyF" && player.canShoot){
+      shootFireball();
+    }
+  });
+  window.addEventListener("keyup", e=>{
+    keys[e.code] = false;
+  });
+
+})();
+</script>
+
+</body>
+</html>
